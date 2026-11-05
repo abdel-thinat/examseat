@@ -1,0 +1,13 @@
+{
+  "name": "examseat",
+  "version": "2.0.0",
+  "description": "Exam seating charts, check-in, timer and incident log for exam proctors.",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

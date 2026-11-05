@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ExamSeat — Exam Seating, Check-in &amp; Incident Log</title>
+  <meta name="description" content="Plan exam seating, check students in, run the exam timer and log incidents.">
+  <link rel="stylesheet" href="css/style.css">
+  <script>
+    // Apply the saved theme before the page draws, so there is no white flash in dark mode.
+    (function () {
+      var theme = "light";
+      try {
+        theme = localStorage.getItem("examseat-theme") ||
+          (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      } catch (e) {}
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>ExamSeat</h1>
+      <p>Seating, check-in and incident log for exam proctors</p>
+    </div>
+    <button id="theme-toggle" class="ghost" type="button" aria-label="Toggle dark mode">🌙 Dark</button>
+  </header>
+
+  <main class="layout">
+    <!-- ============ Sidebar: create, pick and back up exams ============ -->
+    <aside class="sidebar no-print">
+      <section class="card">
+        <h2>New exam</h2>
+        <form id="exam-form">
+          <label>Course
+            <input name="course" required placeholder="e.g. COIS 2240">
+          </label>
+          <label>Room
+            <input name="room" required placeholder="e.g. OC 101">
+          </label>
+          <div class="row">
+            <label>Date
+              <input name="date" type="date" required>
+            </label>
+            <label>Start time
+              <input name="startTime" type="time" value="09:00">
+            </label>
+          </div>
+          <label>Duration (minutes)
+            <input name="durationMin" type="number" min="1" max="600" value="120" required>
+          </label>
+          <div class="row">
+            <label>Rows
+              <input name="rows" type="number" min="1" max="26" value="6" required>
+            </label>
+            <label>Columns
+              <input name="cols" type="number" min="1" max="30" value="8" required>
+            </label>
+          </div>
+          <button type="submit">Create exam</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Exams</h2>
+        <ul id="exam-list" class="exam-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Backup</h2>
+        <p class="muted">Data is saved in this browser. Download a backup to keep it safe or move it to another computer.</p>
+        <div class="actions">
+          <button id="backup-download" class="secondary" type="button">Download backup</button>
+          <label class="button secondary">Restore
+            <input id="backup-restore" type="file" accept=".json,application/json" hidden>
+          </label>
+        </div>
+      </section>
+    </aside>
+
+    <!-- ============ Main area: the selected exam ============ -->
+    <section class="content">
+      <div id="empty-state" class="card empty-card">
+        <h2>No exam selected</h2>
+        <p class="muted">Create an exam on the left to get started.</p>
+      </div>
+
+      <div id="exam-detail" hidden>
+        <!-- Title + timer -->
+        <div class="card exam-header">
+          <div>
+            <h2 id="exam-title"></h2>
+            <p id="exam-meta" class="muted"></p>
+          </div>
+          <div id="timer" class="timer no-print">
+            <span id="timer-label" class="timer-label"></span>
+            <span id="timer-display" class="timer-display"></span>
+            <span id="timer-sub" class="muted timer-sub"></span>
+            <div class="actions timer-actions">
+              <button id="timer-start" type="button">▶ Start exam</button>
+              <button id="timer-extend" type="button" class="secondary">+5 min</button>
+              <button id="timer-end" type="button" class="secondary">End exam</button>
+              <button id="timer-reset" type="button" class="secondary">Reset timer</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="card no-print">
+          <nav class="tabs" role="tablist">
+            <button class="tab" type="button" role="tab" data-tab="setup">1 · Setup</button>
+            <button class="tab" type="button" role="tab" data-tab="examday">2 · Exam day</button>
+            <button class="tab" type="button" role="tab" data-tab="report">3 · Report</button>
+          </nav>
+
+          <!-- Setup -->
+          <div id="tab-setup" class="tab-panel">
+            <div class="panel-grid">
+              <section>
+                <h3>Students</h3>
+                <p class="muted">One per line: <code>ID, name</code>. Add <code>, A</code> at the end if the student needs an accessible seat. Or upload a CSV.</p>
+                <textarea id="student-input" rows="9" placeholder="0712345, Sara Ahmed&#10;0712346, John Lee, A"></textarea>
+                <div class="actions">
+                  <button id="save-students" type="button">Save students</button>
+                  <label class="button secondary">Upload CSV
+                    <input id="csv-upload" type="file" accept=".csv,text/csv" hidden>
+                  </label>
+                  <span id="student-count" class="muted"></span>
+                </div>
+                <p id="student-message" class="message"></p>
+              </section>
+
+              <section>
+                <h3>Seating rules</h3>
+                <label class="checkbox">
+                  <input type="checkbox" id="spacing"> No two students side by side
+                </label>
+
+                <h4>Keep apart</h4>
+                <p class="muted">These students will never sit next to each other, including diagonally.</p>
+                <div class="apart-row">
+                  <select id="apart-a" aria-label="First student"></select>
+                  <select id="apart-b" aria-label="Second student"></select>
+                  <button id="apart-add" type="button" class="secondary">Add</button>
+                </div>
+                <p id="apart-message" class="message"></p>
+                <ul id="apart-list" class="chip-list"></ul>
+
+                <div class="actions">
+                  <button id="assign-seats" type="button">🎲 Auto-assign seats</button>
+                </div>
+                <p id="seat-message" class="message"></p>
+                <p class="muted tip">Tip: switch the room below to <strong>Edit layout</strong> to mark aisles, broken seats (✕) and accessible seats (♿).</p>
+              </section>
+            </div>
+          </div>
+
+          <!-- Exam day -->
+          <div id="tab-examday" class="tab-panel" hidden>
+            <div class="panel-grid">
+              <section>
+                <h3>Quick check-in</h3>
+                <p class="muted">Type a name or student ID, or scan a student card, then press <kbd>Enter</kbd>.</p>
+                <input id="search-input" class="search" type="search" placeholder="Search name or ID…" autocomplete="off">
+                <ul id="search-results" class="result-list"></ul>
+              </section>
+
+              <section>
+                <h3>Incident log</h3>
+                <div class="incident-form">
+                  <select id="incident-student" aria-label="Student"></select>
+                  <select id="incident-type" aria-label="Incident type"></select>
+                  <input id="incident-note" placeholder="Note (optional)" aria-label="Note">
+                  <button id="incident-add" type="button">Log</button>
+                </div>
+                <p class="muted">Late check-ins are logged automatically once the exam has started.</p>
+                <ul id="incident-list" class="incident-list"></ul>
+              </section>
+            </div>
+          </div>
+
+          <!-- Report -->
+          <div id="tab-report" class="tab-panel" hidden>
+            <div id="stats" class="stats"></div>
+            <div class="actions">
+              <button id="export-attendance" type="button">⬇ Attendance CSV</button>
+              <button id="export-incidents" type="button" class="secondary">⬇ Incident log CSV</button>
+              <button id="print" type="button" class="secondary">🖨 Print / save as PDF</button>
+              <button id="reset-attendance" type="button" class="secondary">Reset check-in</button>
+              <button id="delete-exam" type="button" class="danger">Delete exam</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Room / seat grid -->
+        <div class="card room-card">
+          <div class="room-head">
+            <div>
+              <h3>Room</h3>
+              <p id="room-summary" class="muted"></p>
+            </div>
+            <div class="segmented no-print" role="group" aria-label="Room mode">
+              <button id="mode-checkin" type="button">Check in</button>
+              <button id="mode-layout" type="button">Edit layout</button>
+            </div>
+          </div>
+          <p id="grid-hint" class="muted no-print"></p>
+          <ul id="seat-problems" class="problems no-print" hidden></ul>
+
+          <div class="grid-wrap">
+            <div class="front">FRONT OF ROOM</div>
+            <div id="seat-grid" class="seat-grid"></div>
+          </div>
+
+          <div class="legend">
+            <span><i class="dot taken"></i>Not checked in</span>
+            <span><i class="dot present"></i>Present</span>
+            <span><i class="dot late"></i>Late</span>
+            <span><i class="dot absent"></i>Absent</span>
+            <span><i class="dot vacant"></i>Empty</span>
+            <span><i class="dot blocked"></i>Blocked ✕</span>
+            <span><i class="dot accessible"></i>Accessible ♿</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <footer class="footer no-print">
+    Data is saved in your browser only. Nothing is uploaded.
+  </footer>
+
+  <script src="js/core.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
